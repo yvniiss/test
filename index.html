@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendrier de Réservation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #121212;
+            color: white;
+        }
+        .calendar-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .week-container {
+            display: grid;
+            grid-template-columns: 100px repeat(6, 1fr);
+            gap: 5px;
+            text-align: center;
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .hour, .day {
+            font-weight: bold;
+            background-color: #333;
+            padding: 10px;
+        }
+        .slot {
+            background-color: #222;
+            padding: 10px;
+            cursor: pointer;
+            border: 1px solid #444;
+            margin: 2px 0;
+        }
+        .selected {
+            background-color: #4caf50;
+            color: white;
+        }
+        .reserved {
+            background-color: #f44336;
+            color: white;
+        }
+        .holiday {
+            background-color: #555;
+            color: #ddd;
+            cursor: not-allowed;
+        }
+        .form-container, .popup-container {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #333;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+            text-align: center;
+            z-index: 1000;
+            width: 90%;
+            max-width: 400px;
+        }
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .confirm-btn {
+            padding: 5px 10px;
+            background: #4caf50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .cancel-btn {
+            padding: 5px 10px;
+            background: #f44336;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        /* Styles adaptatifs pour les appareils mobiles */
+        @media screen and (max-width: 768px) {
+            .calendar-nav {
+                flex-direction: column;
+                gap: 5px;
+            }
+            
+            .calendar-nav button {
+                margin: 2px 0;
+                padding: 8px;
+            }
+            
+            /* Affichage d'un seul jour à la fois sur mobile */
+            .week-container {
+                display: block;
+                padding: 5px;
+            }
+            
+            .day-section {
+                margin-bottom: 15px;
+                background-color: #1e1e1e;
+                border-radius: 8px;
+                padding: 8px;
+            }
+            
+            .day-header {
+                background-color: #333;
+                font-weight: bold;
+                padding: 10px;
+                margin-bottom: 8px;
+                border-radius: 5px;
+                text-align: center;
+            }
+            
+            .day-content {
+                display: grid;
+                grid-template-columns: 80px 1fr;
+                gap: 5px;
+            }
+            
+            .mobile-hour {
+                background-color: #333;
+                font-weight: bold;
+                padding: 10px;
+                text-align: center;
+            }
+            
+            .mobile-slots {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+            
+            .day-selector {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 10px;
+            }
+            
+            .day-selector button {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                cursor: pointer;
+                border-radius: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Calendrier de Réservation</h1>
+    <p style="color: red; font-weight: bold;">
+        LE CLIENT DOIT PAYER 30 EUROS SUR PLACE EN CB, AUCUNE PERSONNE NE SERA INSCRITE PAR NOUS MÊME. MERCI DE VOUS PRÉSENTER 30MIN AVANT CHAQUE RDV.
+    </p>
+    <div class="calendar-nav">
+        <button onclick="prevWeek()">◀ Semaine Précédente</button>
+        <button onclick="nextWeek()">Semaine Suivante ▶</button>
+    </div>
+    <div id="weeks-container" class="week-container"></div>
+    <div id="mobile-container" style="display: none;"></div>
+    
+    <div class="popup-container" id="popup-container">
+        <h2>Détails de la Réservation</h2>
+        <p id="details-text"></p>
+        <button onclick="closePopup()">Fermer</button>
+    </div>
+
+    <div class="form-container" id="form-container">
+        <h2>Réserver un créneau</h2>
+        <input type="text" id="name" placeholder="Nom"><br>
+        <input type="text" id="surname" placeholder="Prénom"><br>
+        <input type="text" id="reseller" placeholder="Revendeur"><br>
+        <div class="button-group">
+            <button class="confirm-btn" onclick="confirmReservation()">Confirmer</button>
+            <button class="cancel-btn" onclick="closeForm()">Annuler</button>
+        </div>
+    </div>
+    
+    <script>
+        const startDate = new Date();
+        // Ajuster la date pour commencer par le lundi de la semaine courante
+        startDate.setDate(startDate.getDate() - (startDate.getDay() === 0 ? 6 : startDate.getDay() - 1));
+        const endDate = new Date("2025-12-31");
+        const hours = Array.from({ length: 8 }, (_, i) => 12 + i);
+        const slotsPerHour = 3;
+        let currentWeekStart = new Date(startDate);
+        let reservations = {};
+        let selectedSlot = null;
+        let currentMobileDay = 0; // Pour suivre le jour affiché sur mobile (0-5)
+
+        // Liste des jours fériés français en 2025
+        const frenchHolidays = [
+            "01/01/2025", // Jour de l'An
+            "21/04/2025", // Lundi de Pâques
+            "01/05/2025", // Fête du Travail
+            "08/05/2025", // Victoire 1945
+            "29/05/2025", // Ascension
+            "09/06/2025", // Lundi de Pentecôte
+            "14/07/2025", // Fête nationale
+            "15/08/2025", // Assomption
+            "01/11/2025", // Toussaint
+            "11/11/2025", // Armistice 1918
+            "25/12/2025"  // Noël
+        ];
+
+        // Fonction pour vérifier si une date est un jour férié
+        function isHoliday(date) {
+            const formattedDate = date.toLocaleDateString("fr-FR").split("/").join("/");
+            return frenchHolidays.includes(formattedDate);
+        }
+
+        function renderCalendar() {
+            // Vérifier si l'écran est en mode mobile
+            const isMobile = window.innerWidth <= 768;
+            
+            if (isMobile) {
+                renderMobileCalendar();
+            } else {
+                renderDesktopCalendar();
+            }
+        }
+        
+        function renderDesktopCalendar() {
+            const weeksContainer = document.getElementById("weeks-container");
+            const mobileContainer = document.getElementById("mobile-container");
+            
+            weeksContainer.style.display = "grid";
+            mobileContainer.style.display = "none";
+            
+            weeksContainer.innerHTML = "";
+            
+            let headerRow = document.createElement("div");
+            headerRow.classList.add("hour");
+            headerRow.textContent = "Heures";
+            weeksContainer.appendChild(headerRow);
+            
+            let currentDate = new Date(currentWeekStart);
+            for (let i = 0; i < 6; i++) {
+                let dayLabel = currentDate.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" });
+                let dayDiv = document.createElement("div");
+                dayDiv.classList.add("day");
+                
+                if (isHoliday(currentDate)) {
+                    dayLabel += " (Férié)";
+                    dayDiv.style.backgroundColor = "#555";
+                }
+                
+                dayDiv.textContent = dayLabel;
+                weeksContainer.appendChild(dayDiv);
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+            hours.forEach(hour => {
+                let hourRow = document.createElement("div");
+                hourRow.classList.add("hour");
+                hourRow.textContent = `${hour}h`;
+                weeksContainer.appendChild(hourRow);
+                
+                let currentDate = new Date(currentWeekStart);
+                for (let i = 0; i < 6; i++) {
+                    let slotContainer = document.createElement("div");
+                    
+                    if (isHoliday(currentDate)) {
+                        let holidaySlot = document.createElement("div");
+                        holidaySlot.classList.add("slot", "holiday");
+                        holidaySlot.textContent = "Fermé";
+                        slotContainer.appendChild(holidaySlot);
+                    } else {
+                        for (let j = 0; j < slotsPerHour; j++) {
+                            let slot = document.createElement("div");
+                            slot.classList.add("slot");
+                            slot.textContent = `Créneau ${j + 1}`;
+                            const key = `${currentDate.toLocaleDateString("fr-FR")}-${hour}-${j}`;
+                            slot.dataset.key = key;
+                            if (reservations[key]) {
+                                slot.classList.add("reserved");
+                                slot.textContent = `${reservations[key].name}`;
+                            }
+                            slot.addEventListener("click", () => handleSlotClick(slot, key));
+                            slotContainer.appendChild(slot);
+                        }
+                    }
+                    
+                    weeksContainer.appendChild(slotContainer);
+                    currentDate.setDate(currentDate.getDate() + 1);
+                }
+            });
+        }
+        
+        function renderMobileCalendar() {
+            const weeksContainer = document.getElementById("weeks-container");
+            const mobileContainer = document.getElementById("mobile-container");
+            
+            weeksContainer.style.display = "none";
+            mobileContainer.style.display = "block";
+            
+            mobileContainer.innerHTML = "";
+            
+            // Créer le sélecteur de jour
+            const daySelector = document.createElement("div");
+            daySelector.classList.add("day-selector");
+            
+            const prevDayBtn = document.createElement("button");
+            prevDayBtn.textContent = "◀ Jour précédent";
+            prevDayBtn.addEventListener("click", () => {
+                if (currentMobileDay > 0) {
+                    currentMobileDay--;
+                    renderMobileCalendar();
+                }
+            });
+            
+            const nextDayBtn = document.createElement("button");
+            nextDayBtn.textContent = "Jour suivant ▶";
+            nextDayBtn.addEventListener("click", () => {
+                if (currentMobileDay < 5) {
+                    currentMobileDay++;
+                    renderMobileCalendar();
+                }
+            });
+            
+            daySelector.appendChild(prevDayBtn);
+            daySelector.appendChild(nextDayBtn);
+            mobileContainer.appendChild(daySelector);
+            
+            // Créer la section pour le jour sélectionné
+            const daySection = document.createElement("div");
+            daySection.classList.add("day-section");
+            
+            // Calculer la date du jour à afficher
+            let currentDate = new Date(currentWeekStart);
+            currentDate.setDate(currentDate.getDate() + currentMobileDay);
+            
+            // Créer l'en-tête du jour
+            const dayHeader = document.createElement("div");
+            dayHeader.classList.add("day-header");
+            let dayLabel = currentDate.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" });
+            if (isHoliday(currentDate)) {
+                dayLabel += " (Férié)";
+                dayHeader.style.backgroundColor = "#555";
+            }
+            dayHeader.textContent = dayLabel;
+            daySection.appendChild(dayHeader);
+            
+            // Si c'est un jour férié, afficher "fermé" et quitter
+            if (isHoliday(currentDate)) {
+                const holidayMsg = document.createElement("div");
+                holidayMsg.textContent = "Ce jour est férié - Fermé";
+                holidayMsg.style.padding = "20px";
+                holidayMsg.style.textAlign = "center";
+                holidayMsg.style.color = "#ddd";
+                daySection.appendChild(holidayMsg);
+            } else {
+                // Créer le contenu du jour avec les heures et les créneaux
+                hours.forEach(hour => {
+                    const dayContent = document.createElement("div");
+                    dayContent.classList.add("day-content");
+                    
+                    const hourDiv = document.createElement("div");
+                    hourDiv.classList.add("mobile-hour");
+                    hourDiv.textContent = `${hour}h`;
+                    dayContent.appendChild(hourDiv);
+                    
+                    const slotsDiv = document.createElement("div");
+                    slotsDiv.classList.add("mobile-slots");
+                    
+                    for (let j = 0; j < slotsPerHour; j++) {
+                        let slot = document.createElement("div");
+                        slot.classList.add("slot");
+                        slot.textContent = `Créneau ${j + 1}`;
+                        const key = `${currentDate.toLocaleDateString("fr-FR")}-${hour}-${j}`;
+                        slot.dataset.key = key;
+                        if (reservations[key]) {
+                            slot.classList.add("reserved");
+                            slot.textContent = `${reservations[key].name}`;
+                        }
+                        slot.addEventListener("click", () => handleSlotClick(slot, key));
+                        slotsDiv.appendChild(slot);
+                    }
+                    
+                    dayContent.appendChild(slotsDiv);
+                    daySection.appendChild(dayContent);
+                });
+            }
+            
+            mobileContainer.appendChild(daySection);
+        }
+
+        function handleSlotClick(slot, key) {
+            if (slot.classList.contains("holiday")) {
+                return; // Ne rien faire si c'est un jour férié
+            }
+            
+            if (reservations[key]) {
+                document.getElementById("details-text").textContent = `Nom: ${reservations[key].name}, Prénom: ${reservations[key].surname}, Revendeur: ${reservations[key].reseller}`;
+                document.getElementById("popup-container").style.display = "block";
+            } else {
+                selectedSlot = key;
+                document.getElementById("form-container").style.display = "block";
+            }
+        }
+
+        function confirmReservation() {
+            const name = document.getElementById("name").value;
+            const surname = document.getElementById("surname").value;
+            const reseller = document.getElementById("reseller").value;
+            if (name && surname && reseller && selectedSlot) {
+                reservations[selectedSlot] = { name, surname, reseller };
+                closeForm();
+                renderCalendar();
+            }
+        }
+
+        function closePopup() {
+            document.getElementById("popup-container").style.display = "none";
+        }
+        
+        function closeForm() {
+            document.getElementById("form-container").style.display = "none";
+            // Réinitialiser les champs du formulaire
+            document.getElementById("name").value = "";
+            document.getElementById("surname").value = "";
+            document.getElementById("reseller").value = "";
+        }
+
+        function nextWeek() {
+            // Créer une nouvelle date pour vérifier si la semaine suivante dépasserait la limite
+            const testDate = new Date(currentWeekStart);
+            testDate.setDate(testDate.getDate() + 7);
+            
+            // Vérifier si la date test dépasse la date limite
+            if (testDate > endDate) {
+                alert("Vous avez atteint la limite du calendrier (31 décembre 2025)");
+                return;
+            }
+            
+            currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+            currentMobileDay = 0; // Réinitialiser à lundi pour la vue mobile
+            renderCalendar();
+        }
+
+        function prevWeek() {
+            currentWeekStart.setDate(currentWeekStart.getDate() - 7);
+            currentMobileDay = 0; // Réinitialiser à lundi pour la vue mobile
+            renderCalendar();
+        }
+
+        // Fonction pour détecter les changements de taille d'écran
+        window.addEventListener('resize', renderCalendar);
+        
+        // Initialiser le calendrier
+        renderCalendar();
+    </script>
+</body>
+</html>
