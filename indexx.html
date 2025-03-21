@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calendrier de Réservation</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #121212;
+      color: white;
+      padding: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid white;
+      padding: 10px;
+      text-align: center;
+      vertical-align: top;
+    }
+    .slot {
+      padding: 5px;
+      margin: 3px;
+      background-color: #222;
+      border: 1px solid #444;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .reserved {
+      background-color: #e53935;
+      color: white;
+    }
+    .holiday {
+      background-color: #555;
+      color: #ddd;
+    }
+    .calendar-nav {
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .form-container, .popup-container {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      z-index: 1000;
+      width: 90%;
+      max-width: 400px;
+    }
+    .button-group {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .confirm-btn, .cancel-btn {
+      padding: 5px 10px;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    .confirm-btn { background: #4caf50; }
+    .cancel-btn, .popup-container button { background: #f44336; }
+    .popup-container button {
+      padding: 8px 12px;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    @media screen and (max-width: 768px) {
+      #calendar-container {
+        display: none;
+      }
+      #mobile-calendar {
+        display: block;
+      }
+      .slot {
+        display: block;
+        margin-bottom: 10px;
+      }
+      .calendar-nav {
+        flex-direction: column;
+        gap: 10px;
+      }
+    }
+  </style>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyD1MT_zJGW1cozFxPHhq_gra_r3UFmF_x8",
+      authDomain: "resa-968ff.firebaseapp.com",
+      projectId: "resa-968ff",
+      storageBucket: "resa-968ff.appspot.com",
+      messagingSenderId: "909083628507",
+      appId: "1:909083628507:web:6dda9e62e81f61b7ed0dfe",
+      measurementId: "G-Y4FGBGT7K9"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let reservations = {};
+    let selectedSlot = null;
+    let selectedReservationId = null;
+    let currentMobileDay = 0;
+
+    const frenchHolidays = [
+      "01/01/2025", "21/04/2025", "01/05/2025", "08/05/2025",
+      "29/05/2025", "09/06/2025", "14/07/2025", "15/08/2025",
+      "01/11/2025", "11/11/2025", "25/12/2025"
+    ];
+
+    let currentWeekStart = getMonday(new Date());
+    const minDate = getMonday(new Date());
+    const maxDate = new Date("2025-12-31");
+
+    function getMonday(date) {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - (day === 0 ? 6 : day - 1);
+      d.setDate(diff);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+
+    function isHoliday(date) {
+      return frenchHolidays.includes(date.toLocaleDateString("fr-FR"));
+    }
+
+    window.nextWeek = function () {
+      const testDate = new Date(currentWeekStart);
+      testDate.setDate(testDate.getDate() + 7);
+      if (testDate > maxDate) {
+        alert("Vous avez atteint la fin du calendrier (31 décembre 2025)");
+        return;
+      }
+      currentWeekStart = testDate;
+      currentMobileDay = 0;
+      renderCalendar();
+    };
+
+    window.prevWeek = function () {
+      const testDate = new Date(currentWeekStart);
+      testDate.setDate(testDate.getDate() - 7);
+      if (testDate < minDate) {
+        alert("Impossible d'aller avant la semaine actuelle !");
+        return;
+      }
+      currentWeekStart = testDate;
+      currentMobileDay = 0;
+      renderCalendar();
+    };
+
+    window.handleSlotClick = function (slot, key) {
+      if (reservations[key]) {
+        const data = reservations[key];
+        selectedReservationId = data.id;
+        selectedSlot = key;
+        document.getElementById("details-text").innerHTML = `
+          <strong>Nom :</strong> ${data.name} <br>
+          <strong>Prénom :</strong> ${data.surname} <br>
+          <strong>Revendeur :</strong> ${data.reseller}`;
+        document.getElementById("popup-container").style.display = "block";
+      } else {
+        selectedSlot = key;
+        document.getElementById("form-container").style.display = "block";
+      }
+    };
+
+    window.closePopup = function () {
+      document.getElementById("popup-container").style.display = "none";
+    };
+
+    window.closeForm = function () {
+      document.getElementById("form-container").style.display = "none";
+      document.getElementById("name").value = "";
+      document.getElementById("surname").value = "";
+      document.getElementById("reseller").value = "";
+      selectedSlot = null;
+    };
+
+    window.confirmReservation = async function () {
+      const name = document.getElementById("name").value.trim();
+      const surname = document.getElementById("surname").value.trim();
+      const reseller = document.getElementById("reseller").value.trim();
+      if (name && surname && reseller && selectedSlot) {
+        try {
+          await addDoc(collection(db, "reservations"), {
+            name, surname, reseller, slot: selectedSlot, timestamp: new Date()
+          });
+          alert("Réservation enregistrée !");
+          closeForm();
+          loadReservations();
+        } catch (err) {
+          console.error(err);
+          alert("Erreur lors de l'enregistrement");
+        }
+      } else {
+        alert("Remplissez tous les champs");
+      }
+    };
+
+    window.deleteReservation = async function () {
+      if (!selectedReservationId) return;
+      const confirmDelete = confirm("Supprimer cette réservation ?");
+      if (!confirmDelete) return;
+      try {
+        await deleteDoc(doc(db, "reservations", selectedReservationId));
+        alert("Réservation supprimée.");
+        selectedReservationId = null;
+        selectedSlot = null;
+        closePopup();
+        loadReservations();
+      } catch (error) {
+        console.error("Erreur lors de la suppression :", error);
+        alert("Erreur lors de la suppression.");
+      }
+    };
+
+    async function loadReservations() {
+      const snapshot = await getDocs(collection(db, "reservations"));
+      reservations = {};
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        data.id = doc.id;
+        reservations[data.slot] = data;
+      });
+      renderCalendar();
+    }
+
+    function renderCalendar() {
+      const isMobile = window.innerWidth <= 768;
+      if (isMobile) {
+        document.getElementById("calendar-container").style.display = "none";
+        document.getElementById("mobile-calendar").style.display = "block";
+        renderMobileDay();
+      } else {
+        document.getElementById("calendar-container").style.display = "block";
+        document.getElementById("mobile-calendar").style.display = "none";
+        renderDesktopCalendar();
+      }
+    }
+
+    function renderDesktopCalendar() {
+      const container = document.getElementById("calendar-container");
+      container.innerHTML = "";
+      const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+      const hours = [12, 13, 14, 15, 16, 17, 18, 19];
+      const slotsPerHour = 3;
+      let table = document.createElement("table");
+      let headerRow = document.createElement("tr");
+      headerRow.innerHTML = `<th>Heure</th>`;
+      let currentDate = new Date(currentWeekStart);
+      days.forEach(() => {
+        const dayLabel = currentDate.toLocaleDateString("fr-FR", { weekday: "long" });
+        const dateLabel = currentDate.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+        headerRow.innerHTML += `<th>${dayLabel}<br><span style="font-size: 0.9em; color: #ccc;">${dateLabel}</span></th>`;
+        currentDate.setDate(currentDate.getDate() + 1);
+      });
+      table.appendChild(headerRow);
+      for (let h of hours) {
+        let row = document.createElement("tr");
+        row.innerHTML = `<td>${h}h</td>`;
+        let date = new Date(currentWeekStart);
+        for (let i = 0; i < 6; i++) {
+          const isDayHoliday = isHoliday(date);
+          const dateKey = date.toLocaleDateString("fr-FR");
+          const cell = document.createElement("td");
+          if (isDayHoliday) {
+            cell.classList.add("holiday");
+            cell.textContent = "Férié";
+          } else {
+            for (let s = 0; s < slotsPerHour; s++) {
+              const key = `${dateKey}-${h}-${s}`;
+              const div = document.createElement("div");
+              div.classList.add("slot");
+              if (reservations[key]) {
+                div.classList.add("reserved");
+                div.textContent = `Réservé (${reservations[key].name})`;
+              } else {
+                div.textContent = `Créneau ${s + 1}`;
+              }
+              div.onclick = () => handleSlotClick(div, key);
+              cell.appendChild(div);
+            }
+          }
+          row.appendChild(cell);
+          date.setDate(date.getDate() + 1);
+        }
+        table.appendChild(row);
+      }
+      container.appendChild(table);
+    }
+
+    function renderMobileDay() {
+      const container = document.getElementById("mobile-calendar");
+      container.innerHTML = "";
+      const dayNames = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+      const date = new Date(currentWeekStart);
+      date.setDate(date.getDate() + currentMobileDay);
+      const dateKey = date.toLocaleDateString("fr-FR");
+      const label = `${dayNames[currentMobileDay]} ${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}`;
+      const title = document.createElement("h3");
+      title.textContent = label;
+      container.appendChild(title);
+
+      if (isHoliday(date)) {
+        const holidayMsg = document.createElement("p");
+        holidayMsg.textContent = "Jour férié - Pas de créneaux";
+        container.appendChild(holidayMsg);
+        return;
+      }
+
+      const hours = [12, 13, 14, 15, 16, 17, 18, 19];
+      const slotsPerHour = 3;
+
+      hours.forEach(h => {
+        const hourTitle = document.createElement("div");
+        hourTitle.innerHTML = `<strong>${h}h</strong>`;
+        container.appendChild(hourTitle);
+        for (let s = 0; s < slotsPerHour; s++) {
+          const key = `${dateKey}-${h}-${s}`;
+          const div = document.createElement("div");
+          div.classList.add("slot");
+          if (reservations[key]) {
+            div.classList.add("reserved");
+            div.textContent = `Réservé (${reservations[key].name})`;
+          } else {
+            div.textContent = `Créneau ${s + 1}`;
+          }
+          div.onclick = () => handleSlotClick(div, key);
+          container.appendChild(div);
+        }
+      });
+
+      const nav = document.createElement("div");
+      nav.classList.add("button-group");
+
+      const prev = document.createElement("button");
+      prev.textContent = "◀ Jour précédent";
+      prev.disabled = currentMobileDay === 0;
+      prev.onclick = () => {
+        currentMobileDay--;
+        renderMobileDay();
+      };
+
+      const next = document.createElement("button");
+      next.textContent = "Jour suivant ▶";
+      next.disabled = currentMobileDay === 5;
+      next.onclick = () => {
+        currentMobileDay++;
+        renderMobileDay();
+      };
+
+      nav.appendChild(prev);
+      nav.appendChild(next);
+      container.appendChild(nav);
+    }
+
+    window.addEventListener("resize", renderCalendar);
+    loadReservations();
+  </script>
+</head>
+<body>
+  <h1>Calendrier de Réservation</h1>
+  <p style="color: red;">LE CLIENT DOIT PAYER 30 EUROS SUR PLACE EN CB, AUCUNE PERSONNE NE SERA INSCRITE PAR NOUS MÊME. MERCI DE VOUS PRÉSENTER 30MIN AVANT CHAQUE RDV.</p>
+  <p style="color: red;">AU BOUT DE TROIS ABSENCES SANS AVOIR PRÉVENU A L'AVANCE, LE REVENDEUR NE POURRA PLUS RÉSERVER</p>
+  <div class="calendar-nav">
+    <button onclick="prevWeek()">◀ Semaine Précédente</button>
+    <button onclick="nextWeek()">Semaine Suivante ▶</button>
+  </div>
+  <div id="calendar-container"></div>
+  <div id="mobile-calendar" style="display: none;"></div>
+
+  <div class="popup-container" id="popup-container">
+    <h2>Détails de la Réservation</h2>
+    <p id="details-text"></p>
+    <div class="button-group">
+      <button onclick="deleteReservation()">🗑️ Supprimer</button>
+      <button onclick="closePopup()">Fermer</button>
+    </div>
+  </div>
+
+  <div class="form-container" id="form-container">
+    <h2>Réserver un créneau</h2>
+    <input type="text" id="name" placeholder="Nom"><br>
+    <input type="text" id="surname" placeholder="Prénom"><br>
+    <input type="text" id="reseller" placeholder="Revendeur"><br>
+    <div class="button-group">
+      <button class="confirm-btn" onclick="confirmReservation()">Confirmer</button>
+      <button class="cancel-btn" onclick="closeForm()">Annuler</button>
+    </div>
+  </div>
+</body>
+</html>
